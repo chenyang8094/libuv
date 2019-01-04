@@ -83,18 +83,27 @@
 struct uv__io_s;
 struct uv_loop_s;
 
+/* io回调函数类型定义 */
 typedef void (*uv__io_cb)(struct uv_loop_s* loop,
                           struct uv__io_s* w,
                           unsigned int events);
 typedef struct uv__io_s uv__io_t;
 
+/* io事件的watcher */
 struct uv__io_s {
+  /* 回调 */
   uv__io_cb cb;
+  /* pending队列节点（前后向指针），用于构建loop pending队列 */
   void* pending_queue[2];
+  /* watcher队列节点（前后向指针），用于构建loop watcher队列 */
   void* watcher_queue[2];
-  unsigned int pevents; /* Pending event mask i.e. mask at next tick. */
-  unsigned int events;  /* Current event mask. */
+  /* Pending event mask i.e. mask at next tick. */
+  unsigned int pevents; 
+  /* Current event mask. */
+  unsigned int events;  
+  /* 该watcher观察（绑定）的fd */
   int fd;
+  /* in linux empty */
   UV_IO_PRIVATE_PLATFORM_FIELDS
 };
 
@@ -201,37 +210,37 @@ typedef struct {
 } uv_lib_t;
 
 #define UV_LOOP_PRIVATE_FIELDS                                                \
-  unsigned long flags;                                                        \
-  int backend_fd;                                                             \
-  void* pending_queue[2];                                                     \
-  void* watcher_queue[2];                                                     \
-  uv__io_t** watchers;                                                        \
-  unsigned int nwatchers;                                                     \
-  unsigned int nfds;                                                          \
-  void* wq[2];                                                                \
-  uv_mutex_t wq_mutex;                                                        \
-  uv_async_t wq_async;                                                        \
-  uv_rwlock_t cloexec_lock;                                                   \
-  uv_handle_t* closing_handles;                                               \
-  void* process_handles[2];                                                   \
-  void* prepare_handles[2];                                                   \
-  void* check_handles[2];                                                     \
-  void* idle_handles[2];                                                      \
-  void* async_handles[2];                                                     \
+  unsigned long flags;   /* loop标志，目前只有：UV_LOOP_BLOCK_SIGPROF */                                                              \
+  int backend_fd;     /* 后端fd，如linux下的epoll_create或者osx下的kqueue */                                                                 \
+  void* pending_queue[2];  /*  */                                                            \
+  void* watcher_queue[2];  /* watcher队列， */                                                            \
+  uv__io_t** watchers;     /*  */                                                            \
+  unsigned int nwatchers;  /*   */                                                            \
+  unsigned int nfds;    /*  */                                                               \
+  void* wq[2]; /*  */                                                               \
+  uv_mutex_t wq_mutex;   /*  */                                                              \
+  uv_async_t wq_async;   /*  */                                                              \
+  uv_rwlock_t cloexec_lock;   /*  */                                                         \
+  uv_handle_t* closing_handles;  /*  */                                                      \
+  void* process_handles[2];   /*  */                                                         \
+  void* prepare_handles[2];  /*  */                                                          \
+  void* check_handles[2];    /*  */                                                          \
+  void* idle_handles[2];   /*  */                                                            \
+  void* async_handles[2];   /*  */                                                           \
   void (*async_unused)(void);  /* TODO(bnoordhuis) Remove in libuv v2. */     \
-  uv__io_t async_io_watcher;                                                  \
-  int async_wfd;                                                              \
+  uv__io_t async_io_watcher;    /*  */                                                       \
+  int async_wfd;         /*  */                                                              \
   struct {                                                                    \
     void* min;                                                                \
     unsigned int nelts;                                                       \
-  } timer_heap;                                                               \
-  uint64_t timer_counter;                                                     \
-  uint64_t time;                                                              \
-  int signal_pipefd[2];                                                       \
-  uv__io_t signal_io_watcher;                                                 \
-  uv_signal_t child_watcher;                                                  \
-  int emfile_fd;                                                              \
-  UV_PLATFORM_LOOP_FIELDS                                                     \
+  } timer_heap;     /*  */                                                                   \
+  uint64_t timer_counter;  /*  */                                                            \
+  uint64_t time;       /*  */                                                                \
+  int signal_pipefd[2];   /*  */                                                             \
+  uv__io_t signal_io_watcher;  /*  */                                                        \
+  uv_signal_t child_watcher;  /*  */                                                         \
+  int emfile_fd;             /*  */                                                          \
+  UV_PLATFORM_LOOP_FIELDS    /*  */                                                          \
 
 #define UV_REQ_TYPE_PRIVATE /* empty */
 

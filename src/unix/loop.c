@@ -27,18 +27,25 @@
 #include <string.h>
 #include <unistd.h>
 
+// 事件循环loop初始化
 int uv_loop_init(uv_loop_t* loop) {
   void* saved_data;
   int err;
 
-
+  // 暂存User data
   saved_data = loop->data;
+  // 清空loop结构
   memset(loop, 0, sizeof(*loop));
+  // 恢复User data
   loop->data = saved_data;
 
+  // 初始化定时器堆结构
   heap_init((struct heap*) &loop->timer_heap);
+  // 初始化线程池（threadpool）工作队列
   QUEUE_INIT(&loop->wq);
+  // 
   QUEUE_INIT(&loop->idle_handles);
+  // 
   QUEUE_INIT(&loop->async_handles);
   QUEUE_INIT(&loop->check_handles);
   QUEUE_INIT(&loop->prepare_handles);

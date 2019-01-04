@@ -885,7 +885,7 @@ void uv__io_close(uv_loop_t* loop, uv__io_t* w) {
   uv__platform_invalidate_fd(loop, w->fd);
 }
 
-
+/*  */
 void uv__io_feed(uv_loop_t* loop, uv__io_t* w) {
   if (QUEUE_EMPTY(&w->pending_queue))
     QUEUE_INSERT_TAIL(&loop->pending_queue, &w->pending_queue);

@@ -1670,18 +1670,22 @@ union uv_any_req {
 
 
 struct uv_loop_s {
-  /* User data - use this for whatever. */
+  /* User data 可以用来存放任何数据 */
   void* data;
-  /* Loop reference counting. */
+  /* 该loop上当前活动的handle数目，可以看出该loop的引用计数 */
   unsigned int active_handles;
+  /* handle队列*/
   void* handle_queue[2];
+  /* 活动的请求计数 */
   union {
     void* unused[2];
     unsigned int count;
   } active_reqs;
-  /* Internal flag to signal loop stop. */
+  /* 内部标志，通知loop退出 */
   unsigned int stop_flag;
+  /* 保留填充字段 */
   void* reserved[4];
+  /* 私有字段，模仿OOP编程中的private成员，这只是形象上的，实际上编译器并不会阻止你访问这些字段 */
   UV_LOOP_PRIVATE_FIELDS
 };
 
