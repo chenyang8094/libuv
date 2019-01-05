@@ -32,70 +32,99 @@ int uv_loop_init(uv_loop_t* loop) {
   void* saved_data;
   int err;
 
-  // 暂存User data
+  /* 暂存User data */
   saved_data = loop->data;
-  // 清空loop结构
+  /* 清空loop结构 */
   memset(loop, 0, sizeof(*loop));
-  // 恢复User data
+  /* 恢复User data */
   loop->data = saved_data;
 
-  // 初始化定时器堆结构
+  /* 初始化定时器堆结构 */
   heap_init((struct heap*) &loop->timer_heap);
-  // 初始化线程池（threadpool）工作队列
+  /* 初始化线程池（threadpool）工作队列 */
   QUEUE_INIT(&loop->wq);
-  // 
+  /*   */
   QUEUE_INIT(&loop->idle_handles);
-  // 
+  /*   */
   QUEUE_INIT(&loop->async_handles);
+  /*   */
   QUEUE_INIT(&loop->check_handles);
+  /*   */
   QUEUE_INIT(&loop->prepare_handles);
+  /*   */
   QUEUE_INIT(&loop->handle_queue);
 
+  /*   */
   loop->active_handles = 0;
+  /*   */
   loop->active_reqs.count = 0;
+  /*   */
   loop->nfds = 0;
+  /*   */
   loop->watchers = NULL;
+  /*   */
   loop->nwatchers = 0;
+  /*   */
   QUEUE_INIT(&loop->pending_queue);
+  /*   */
   QUEUE_INIT(&loop->watcher_queue);
 
+  /*   */
   loop->closing_handles = NULL;
+  /*   */
   uv__update_time(loop);
+  /*   */
   loop->async_io_watcher.fd = -1;
+  /*   */
   loop->async_wfd = -1;
+  /*   */
   loop->signal_pipefd[0] = -1;
   loop->signal_pipefd[1] = -1;
+  /*   */
   loop->backend_fd = -1;
+  /*   */
   loop->emfile_fd = -1;
-
+  
+  /*   */
   loop->timer_counter = 0;
+  /*   */
   loop->stop_flag = 0;
 
+  /* loop平台相关初始化，如用linux的epoll创建后端fd */
   err = uv__platform_loop_init(loop);
   if (err)
     return err;
 
+  /* 信号全局一次初始化  */
   uv__signal_global_once_init();
+  /* 信号handle初始化 */
   err = uv_signal_init(loop, &loop->child_watcher);
   if (err)
     goto fail_signal_init;
 
+  /*   */
   uv__handle_unref(&loop->child_watcher);
+  /*   */
   loop->child_watcher.flags |= UV_HANDLE_INTERNAL;
+  /*   */
   QUEUE_INIT(&loop->process_handles);
 
+  /*   */
   err = uv_rwlock_init(&loop->cloexec_lock);
   if (err)
     goto fail_rwlock_init;
 
+  /*   */
   err = uv_mutex_init(&loop->wq_mutex);
   if (err)
     goto fail_mutex_init;
 
+  /*   */
   err = uv_async_init(loop, &loop->wq_async, uv__work_done);
   if (err)
     goto fail_async_init;
 
+  /*   */
   uv__handle_unref(&loop->wq_async);
   loop->wq_async.flags |= UV_HANDLE_INTERNAL;
 
@@ -149,26 +178,36 @@ int uv_loop_fork(uv_loop_t* loop) {
   return 0;
 }
 
-
+/*   */
 void uv__loop_close(uv_loop_t* loop) {
+  /*   */
   uv__signal_loop_cleanup(loop);
+  /*   */
   uv__platform_loop_delete(loop);
+  /*   */
   uv__async_stop(loop);
 
+  /*   */
   if (loop->emfile_fd != -1) {
     uv__close(loop->emfile_fd);
     loop->emfile_fd = -1;
   }
 
+  /*   */
   if (loop->backend_fd != -1) {
     uv__close(loop->backend_fd);
     loop->backend_fd = -1;
   }
 
+  /*   */
   uv_mutex_lock(&loop->wq_mutex);
+  /*   */
   assert(QUEUE_EMPTY(&loop->wq) && "thread pool work queue not empty!");
+  /*   */
   assert(!uv__has_active_reqs(loop));
+  /*   */
   uv_mutex_unlock(&loop->wq_mutex);
+  /*   */
   uv_mutex_destroy(&loop->wq_mutex);
 
   /*

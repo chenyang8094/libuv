@@ -436,8 +436,16 @@ void uv_rwlock_wrunlock(uv_rwlock_t* rwlock) {
     abort();
 }
 
-
+/* 用来保证callback在全局只初始化执行一次 */
 void uv_once(uv_once_t* guard, void (*callback)(void)) {
+  /* 
+   pthread_once原型如下，它可以在多线程中被并发的调用，但是只有第一次调用pthread_once的线程可以成
+   的执行callback 
+   int pthread_once(pthread_once_t *once_control,
+       void (*init_routine)(void));
+   pthread_once_t once_control = PTHREAD_ONCE_INIT;
+   细节参见：http://pubs.opengroup.org/onlinepubs/009695399/functions/pthread_once.html
+   */
   if (pthread_once(guard, callback))
     abort();
 }

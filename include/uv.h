@@ -1496,7 +1496,7 @@ UV_EXTERN int uv_fs_poll_getpath(uv_fs_poll_t* handle,
                                  char* buffer,
                                  size_t* size);
 
-
+/* 信号handle */
 struct uv_signal_s {
   UV_HANDLE_FIELDS
   uv_signal_cb signal_cb;

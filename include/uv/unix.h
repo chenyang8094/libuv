@@ -224,7 +224,7 @@ typedef struct {
   uv_rwlock_t cloexec_lock;   /*  */                                                         \
   uv_handle_t* closing_handles;  /*  */                                                      \
   void* process_handles[2];   /*  */                                                         \
-  void* prepare_handles[2];  /*  */                                                          \
+  void* prepare_handles[2];  /* 预备handles队列 */                                                          \
   void* check_handles[2];    /*  */                                                          \
   void* idle_handles[2];   /* 空闲handles队列 */                                                            \
   void* async_handles[2];   /*  */                                                           \
@@ -237,9 +237,9 @@ typedef struct {
   } timer_heap;     /*  */                                                                   \
   uint64_t timer_counter;  /*  */                                                            \
   uint64_t time;       /*  */                                                                \
-  int signal_pipefd[2];   /*  */                                                             \
+  int signal_pipefd[2];   /* 信号管道 */                                                             \
   uv__io_t signal_io_watcher;  /* 信号watcher */                                                        \
-  uv_signal_t child_watcher;  /*  */                                                         \
+  uv_signal_t child_watcher;  /* 子进程watcher */                                                         \
   int emfile_fd;             /*  */                                                          \
   UV_PLATFORM_LOOP_FIELDS    /*  */                                                          \
 

@@ -367,9 +367,9 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
     任何上一次循环中被推迟的回调，都将在这个时候得到执行。返回值为0表示没有
     悬挂的watcher回调被执行，为1表示至少有一个悬挂的watcher回调被执行 */
     ran_pending = uv__run_pending(loop);
-    /* 执行空handle闲回调 TODO */
+    /* 执行空闲handle回调，这个函数使用宏定义，参见loop-watcher.c文件 */
     uv__run_idle(loop);
-    /* 执行预备回调 TODO */
+    /* 执行预备handle回调，这个函数使用宏定义，参见loop-watcher.c文件*/
     uv__run_prepare(loop);
 
     /* 超时时间默认为0，为不阻塞 */
@@ -380,13 +380,14 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
       timeout = uv_backend_timeout(loop);
     }
       
-    /* 阻塞id事件循环 */
+    /* 进行io事件轮询 */
     uv__io_poll(loop, timeout);
-    /* 执行检查句柄回调 */
+    /* 执行检查handle回调 ，这个函数使用宏定义，参见loop-watcher.c文件*/
     uv__run_check(loop);
     /* 执行关闭回调 */
     uv__run_closing_handles(loop);
 
+    /* UV_RUN_ONCE要求loop返回之前至少执行一次回调，所以需要特殊处理一下 */
     if (mode == UV_RUN_ONCE) {
       /* UV_RUN_ONCE implies forward progress: at least one callback must have
        * been invoked when it returns. uv__io_poll() can return without doing
@@ -396,7 +397,9 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
        * UV_RUN_NOWAIT makes no guarantees about progress so it's omitted from
        * the check.
        */
+      /* 更新当前时间 */
       uv__update_time(loop);
+      /* 运行定时器 */
       uv__run_timers(loop);
     }
 

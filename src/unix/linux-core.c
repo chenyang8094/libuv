@@ -82,6 +82,7 @@ static void read_speeds(unsigned int numcpus, uv_cpu_info_t* ci);
 static unsigned long read_cpufreq(unsigned int cpunum);
 
 
+/*  loop平台相关的初始化 */
 int uv__platform_loop_init(uv_loop_t* loop) {
   int fd;
 
@@ -91,14 +92,21 @@ int uv__platform_loop_init(uv_loop_t* loop) {
    * or because it doesn't understand the EPOLL_CLOEXEC flag.
    */
   if (fd == -1 && (errno == ENOSYS || errno == EINVAL)) {
+    /* 创建后端fd 
+    原型：int epoll_create(int size);
+    细节参见： http://man7.org/linux/man-pages/man2/epoll_create.2.html
+     */
     fd = epoll_create(256);
 
     if (fd != -1)
       uv__cloexec(fd, 1);
   }
-
+  
+  /* 设置后端fd  */
   loop->backend_fd = fd;
+  /*   */
   loop->inotify_fd = -1;
+  /*   */
   loop->inotify_watchers = NULL;
 
   if (fd == -1)
@@ -286,10 +294,10 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
   
   /* -1：阻塞  0：非阻塞  >0: 最长阻塞timeout时间 */
   assert(timeout >= -1);
-  /*  */
+  /* 保存当前时间，即本次poll的开始时间 */
   base = loop->time;
   count = 48; /* Benchmarks suggest this gives the best throughput. */
-  /* 保存超时时间 */
+  /* 保存超时时间（长度） */
   real_timeout = timeout;
 
   for (;;) {
@@ -312,7 +320,15 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     /* Update loop->time unconditionally. It's tempting to skip the update when
      * timeout == 0 (i.e. non-blocking poll) but there is no guarantee that the
      * operating system didn't reschedule our process while in the syscall.
-     * 更新loop->time = uv__hrtime(UV_CLOCK_FAST) / 1000000;
+     * 
+     * 无条件更新loop->time = uv__hrtime(UV_CLOCK_FAST) / 1000000;
+     * SAVE_ERRNO这一句相当于一下代码：
+     *   int _saved_errno = errno;                                                 
+     *   uv__update_time(loop)                                            
+     *   errno = _saved_errno;   
+     * 
+     * 这么做的原因是不能因为uv__update_time出错而导致errno被改变，因为后文会用到errno来判断epoll_pwait
+     * 状态  
      */
     SAVE_ERRNO(uv__update_time(loop));
 
@@ -337,7 +353,8 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       /* 如果不是被信号中断发生的错误则abort */
       if (errno != EINTR)
         abort();
-      /* 如果是在阻塞模式下被信号中断，则继续下一次循环 */
+
+      /* 如果是在阻塞模式下被信号中断，则继续下一次epoll_pwait */
       if (timeout == -1)
         continue;
 
@@ -351,7 +368,9 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
 
     /* 能运行到这里，说明一定有就绪的fd事件  */
 
+    /* 是否有信号 */
     have_signals = 0;
+    /* 已处理的事件个数 */
     nevents = 0;
     
     /* watchers不为空指针（uv__io_t** watchers）  */
@@ -394,7 +413,9 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * the current watcher. Also, filters out events that users has not
        * requested us to watch.
        * 
-       * 只过滤出用户真正感兴趣的事件
+       * 仅为用户提供他们感兴趣的事件。当此循环中的先前回调调用已停止当前观察者时，
+       * 防止虚假回调。此外，过滤掉用户未请求我们观看的事件。这里注意EPOLLERR和POLLHUP会在
+       * epoll_pwait中被无条件加入到events中，因此这里也需要保留。
        */
       pe->events &= w->pevents | POLLERR | POLLHUP;
 
@@ -403,6 +424,9 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * move forward, we merge in the read/write events that the watcher
        * is interested in; uv__read() and uv__write() will then deal with
        * the error or hangup in the usual fashion.
+       * 
+       * 为了解决一个epoll怪癖，它有时只报告EPOLLERR或EPOLLHUP事件。为了强制事件循环向前移动，
+       * 我们合并了watcher感兴趣的读/写事件; 然后uv__read（）和uv__write（）将以通常的方式处理错误或挂起。
        *
        * Note to self: happens when epoll reports EPOLLIN|EPOLLHUP, the user
        * reads the available data, calls uv_read_stop(), then sometime later
@@ -412,6 +436,8 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * current hack is just a quick bandaid; to properly fix it, libuv
        * needs to remember the error/hangup event.  We should get that for
        * free when we switch over to edge-triggered I/O.
+       * 
+       * 
        */
       if (pe->events == POLLERR || pe->events == POLLHUP)
         pe->events |=
@@ -424,10 +450,12 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
          * 
          */
         if (w == &loop->signal_io_watcher)
-          have_signals = 1;/* 标记有信号要处理，暂时不处理这个信号，等到所有fd处理完循环退出后再处理 */
+          have_signals = 1;/* 如果该watcher是loop->signal_io_watcher，
+                             标记有信号要处理，暂时不处理这个信号，等到所有fd处理完循环退出后再处理 */
         else /* 不是信号的事件直接进行回调处理 */
           w->cb(loop, w, pe->events);
-
+        
+        /* 已处理的事件计数 */
         nevents++;
       }
     }
@@ -436,6 +464,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     if (have_signals != 0)
       loop->signal_io_watcher.cb(loop, &loop->signal_io_watcher, POLLIN);
 
+    /*  */ 
     loop->watchers[loop->nwatchers] = NULL;
     loop->watchers[loop->nwatchers + 1] = NULL;
 
@@ -443,21 +472,29 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     if (have_signals != 0)
       return;  /* Event loop should cycle now so don't poll again. */
 
-    /*  */ 
+    /* 已处理的事件不为0 */ 
     if (nevents != 0) {
+      /* 已处理的事件不为0，且本次epoll_pwait返回值nfds正好等于ARRAY_SIZE(events)，说明可能有更多
+      的就绪事件等待被处理，因此还需要再次轮询。但是为了避免一次性处理太多事件而导致整个事件循环被阻塞过长
+      时间，这里用count来控制 */ 
       if (nfds == ARRAY_SIZE(events) && --count != 0) {
-        /* Poll for more events but don't block this time. */
+        /* 继续下一轮epoll_pwait，但是此次timeout为0，不阻塞，因此轮询会很快 */
         timeout = 0;
         continue;
       }
+
+      /* 如果nfds不等于（其实就是小于）ARRAY_SIZE(events)，那就说明此次轮询就绪的事件就这么多，没没要再
+      轮询了，直接返回上层loop大循环 */ 
       return;
     }
+
+    /* 运行都这里，说明nevents为0，即没有处理信号也没有处理事件 */
      
-    /*  */
+    /* 非阻塞模式，则退出函数 */
     if (timeout == 0)
       return;
 
-    /*  */
+    /* 阻塞模式，则继续下一次epoll_pwait */
     if (timeout == -1)
       continue;
 
@@ -465,10 +502,13 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
 update_timeout:
     assert(timeout > 0);
 
+    /* loop->time - base为已经过去的时间，real_timeout减去已经过去的时间就是剩下的timeout */
     real_timeout -= (loop->time - base);
+    /* real_timeout <= 0表示已经超时，则直接返回、退出循环 */
     if (real_timeout <= 0)
       return;
 
+    /* 更新timeout，进入下一次epoll_pwait轮询 */
     timeout = real_timeout;
   }
 }
