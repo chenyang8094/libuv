@@ -217,20 +217,31 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     assert(QUEUE_EMPTY(&loop->watcher_queue));
     return;
   }
-
+  /* 如果该loop上的watcher队列不为空，则遍历队列 */
   while (!QUEUE_EMPTY(&loop->watcher_queue)) {
+    /* 取出watcher队列头节点 */
     q = QUEUE_HEAD(&loop->watcher_queue);
+    /* 从watcher队列中删除该节点 */
     QUEUE_REMOVE(q);
+    /* 将取出的结点前后向指针指向自己，完全脱离队列 */
     QUEUE_INIT(q);
 
+    /* 根据取出的队列节点还原watcher结构，典型的contaner_of用法 */
     w = QUEUE_DATA(q, uv__io_t, watcher_queue);
+    /* 确保该watcher有待处理的悬挂事件pending events，可以为EPOLLIN、EPOLLOUT、EPOLLRDHUP、EPOLLPRI、
+      EPOLLERR、EPOLLET、EPOLLONESHOT、EPOLLWAKEUP、EPOLLEXCLUSIVE */
     assert(w->pevents != 0);
+    /* 该watcher绑定的fd必须是有效的 */
     assert(w->fd >= 0);
+    /*   */
     assert(w->fd < (int) loop->nwatchers);
-
+   
+    /* 初始化epoll要监听的事件为watcher的Pending event */
     e.events = w->pevents;
+    /* 初始化epoll要监听的fd为watcher绑定的fd */
     e.data.fd = w->fd;
 
+    /* 如果该watcher当前已经注册的events为0，即之前没有注册过event，则此次就是EPOLL_CTL_ADD，否则为EPOLL_CTL_MOD */
     if (w->events == 0)
       op = EPOLL_CTL_ADD;
     else
@@ -238,31 +249,47 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
 
     /* XXX Future optimization: do EPOLL_CTL_MOD lazily if we stop watching
      * events, skip the syscall and squelch the events after epoll_wait().
+     * 
+     * 向epoll注册事件
+     * 原型：int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+     * 细节参见：http://man7.org/linux/man-pages/man2/epoll_ctl.2.html 
      */
     if (epoll_ctl(loop->backend_fd, op, w->fd, &e)) {
+      /* 如果发生错误，并且错误不是EEXIST，则发生异常错误，直接abort */
       if (errno != EEXIST)
         abort();
 
+      /* 否则，就是EEXIST错误，表示对一个已经注册的fd执行EPOLL_CTL_ADD操作 */
       assert(op == EPOLL_CTL_ADD);
 
-      /* We've reactivated a file descriptor that's been watched before. */
-      if (epoll_ctl(loop->backend_fd, EPOLL_CTL_MOD, w->fd, &e))
-        abort();
+      /* 重新用EPOLL_CTL_MOD来注册这个事件 */
+      if (epoll_ctl(loop->backend_fd, EPOLL_CTL_MOD, w->fd, &e)){
+            /* 如果还出错就直接abort */
+            abort();
+      } 
     }
-
+    /* 把该watcher的当前events更新为pevents */
     w->events = w->pevents;
   }
 
+  /* 至此watcher队列遍历完毕，所有的watcher对应的事件都已经被注册到epoll上 */
+
+  /* psigset初始化 */
   psigset = NULL;
+  /* 如果loop需要在epoll_pwait时候临时屏蔽SIGPROF信号 */
   if (loop->flags & UV_LOOP_BLOCK_SIGPROF) {
+    /* 设置SIGPROF */
     sigemptyset(&sigset);
     sigaddset(&sigset, SIGPROF);
     psigset = &sigset;
   }
-
+  
+  /* -1：阻塞  0：非阻塞  >0: 最长阻塞timeout时间 */
   assert(timeout >= -1);
+  /*  */
   base = loop->time;
   count = 48; /* Benchmarks suggest this gives the best throughput. */
+  /* 保存超时时间 */
   real_timeout = timeout;
 
   for (;;) {
@@ -271,7 +298,11 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
      */
     if (sizeof(int32_t) == sizeof(long) && timeout >= max_safe_timeout)
       timeout = max_safe_timeout;
-
+    
+    /* 在epoll fd上查询所有注册的事件,每次最多返回1024个事件，该系统调用最长会被阻塞timeout 
+    原型：int epoll_pwait(int epfd, struct epoll_event *events,int maxevents, int timeout, 
+          const sigset_t *sigmask);
+    细节参见: http://man7.org/linux/man-pages/man2/epoll_wait.2.html */
     nfds = epoll_pwait(loop->backend_fd,
                        events,
                        ARRAY_SIZE(events),
@@ -281,43 +312,58 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     /* Update loop->time unconditionally. It's tempting to skip the update when
      * timeout == 0 (i.e. non-blocking poll) but there is no guarantee that the
      * operating system didn't reschedule our process while in the syscall.
+     * 更新loop->time = uv__hrtime(UV_CLOCK_FAST) / 1000000;
      */
     SAVE_ERRNO(uv__update_time(loop));
 
+    /* 0表示没有就绪的fd */
     if (nfds == 0) {
+      /* 不能是阻塞模式 */
       assert(timeout != -1);
 
+      /* 非阻塞模式则直接返回 */
       if (timeout == 0)
         return;
 
       /* We may have been inside the system call for longer than |timeout|
        * milliseconds so we need to update the timestamp to avoid drift.
+       * 否则就一定是超时，跳转到update_timeout更新超时时间
        */
       goto update_timeout;
     }
 
+    /* 发生错误 */
     if (nfds == -1) {
+      /* 如果不是被信号中断发生的错误则abort */
       if (errno != EINTR)
         abort();
-
+      /* 如果是在阻塞模式下被信号中断，则继续下一次循环 */
       if (timeout == -1)
         continue;
 
+      /* 如果是在非阻塞模式下被信号中断，则返回 */
       if (timeout == 0)
         return;
 
-      /* Interrupted by a signal. Update timeout and poll again. */
+      /* 如果是有超时时间情况下被信号打断，则更新timeout 进行下一次 poll */
       goto update_timeout;
     }
 
+    /* 能运行到这里，说明一定有就绪的fd事件  */
+
     have_signals = 0;
     nevents = 0;
-
+    
+    /* watchers不为空指针（uv__io_t** watchers）  */
     assert(loop->watchers != NULL);
+    /*  */
     loop->watchers[loop->nwatchers] = (void*) events;
     loop->watchers[loop->nwatchers + 1] = (void*) (uintptr_t) nfds;
+    /* 遍历所有就绪的fd */
     for (i = 0; i < nfds; i++) {
-      pe = events + i;
+      /* 第i个就绪的事件 */
+      pe = events + i; 
+      /* 第i个就绪的事件对应的fd */
       fd = pe->data.fd;
 
       /* Skip invalidated events, see uv__platform_invalidate_fd */
@@ -325,15 +371,19 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
         continue;
 
       assert(fd >= 0);
+      /*  */
       assert((unsigned) fd < loop->nwatchers);
-
+      
+      /* 根据fd取出watcher */
       w = loop->watchers[fd];
-
+      /* 如果该watcher为空指针 */
       if (w == NULL) {
         /* File descriptor that we've stopped watching, disarm it.
          *
          * Ignore all errors because we may be racing with another thread
          * when the file descriptor is closed.
+         * 
+         * 说明这个fd已经被关闭了，忽略epoll_ctl返回的任何错误
          */
         epoll_ctl(loop->backend_fd, EPOLL_CTL_DEL, fd, pe);
         continue;
@@ -343,6 +393,8 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
        * callbacks when previous callback invocation in this loop has stopped
        * the current watcher. Also, filters out events that users has not
        * requested us to watch.
+       * 
+       * 只过滤出用户真正感兴趣的事件
        */
       pe->events &= w->pevents | POLLERR | POLLHUP;
 
@@ -364,29 +416,34 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       if (pe->events == POLLERR || pe->events == POLLHUP)
         pe->events |=
           w->pevents & (POLLIN | POLLOUT | UV__POLLRDHUP | UV__POLLPRI);
-
+      
+      /* 如果事件不为空 */
       if (pe->events != 0) {
         /* Run signal watchers last.  This also affects child process watchers
          * because those are implemented in terms of signal watchers.
+         * 
          */
         if (w == &loop->signal_io_watcher)
-          have_signals = 1;
-        else
+          have_signals = 1;/* 标记有信号要处理，暂时不处理这个信号，等到所有fd处理完循环退出后再处理 */
+        else /* 不是信号的事件直接进行回调处理 */
           w->cb(loop, w, pe->events);
 
         nevents++;
       }
     }
 
+    /* 有信号要处理,就调用signal_io_watcher回调 */
     if (have_signals != 0)
       loop->signal_io_watcher.cb(loop, &loop->signal_io_watcher, POLLIN);
 
     loop->watchers[loop->nwatchers] = NULL;
     loop->watchers[loop->nwatchers + 1] = NULL;
 
+    /* 有信号 */
     if (have_signals != 0)
       return;  /* Event loop should cycle now so don't poll again. */
 
+    /*  */ 
     if (nevents != 0) {
       if (nfds == ARRAY_SIZE(events) && --count != 0) {
         /* Poll for more events but don't block this time. */
@@ -395,13 +452,16 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       }
       return;
     }
-
+     
+    /*  */
     if (timeout == 0)
       return;
 
+    /*  */
     if (timeout == -1)
       continue;
 
+    /* 更新超时时间 */
 update_timeout:
     assert(timeout > 0);
 

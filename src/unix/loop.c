@@ -27,7 +27,7 @@
 #include <string.h>
 #include <unistd.h>
 
-// 事件循环loop初始化
+/* 事件循环loop结构初始化 */
 int uv_loop_init(uv_loop_t* loop) {
   void* saved_data;
   int err;

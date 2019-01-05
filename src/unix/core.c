@@ -305,28 +305,35 @@ uv_os_fd_t uv_backend_fd(const uv_loop_t* loop) {
   return loop->backend_fd;
 }
 
-
+/* 计算后端（在linux上就是epoll_wait）超时时间 */
 int uv_backend_timeout(const uv_loop_t* loop) {
+  /* 如果loop即将停止（uv_stop() 已在之前被调用），那么超时将会是 0 */
   if (loop->stop_flag != 0)
     return 0;
 
+  /* 如果loop内没有激活的句柄和请求，那么超时将会是 0 */
   if (!uv__has_active_handles(loop) && !uv__has_active_reqs(loop))
     return 0;
 
+  /* 如果loop内有激活的闲置句柄，那么超时将会是 0  */
   if (!QUEUE_EMPTY(&loop->idle_handles))
     return 0;
 
+  /* 如果有待处理的悬挂watcher,那么超时将会是 0    */
   if (!QUEUE_EMPTY(&loop->pending_queue))
     return 0;
 
+  /* 如果有正在等待被关闭的句柄，那么超时将会是 0  */
   if (loop->closing_handles)
     return 0;
 
+  /* 否则获取下一个超时时间（即能保证至少有一个定时器超时） */
   return uv__next_timeout(loop);
 }
 
-
+/* 判断一个loop是否还是激活状态,激活返回1，否则返回0 */
 static int uv__loop_alive(const uv_loop_t* loop) {
+  /* 有正在活动的handles 或 有正在活动的请求待处理 或 有正在被关闭的handles */
   return uv__has_active_handles(loop) ||
          uv__has_active_reqs(loop) ||
          loop->closing_handles != NULL;
@@ -337,29 +344,47 @@ int uv_loop_alive(const uv_loop_t* loop) {
     return uv__loop_alive(loop);
 }
 
-
+/* 开始loop循环 */
 int uv_run(uv_loop_t* loop, uv_run_mode mode) {
   int timeout;
   int r;
   int ran_pending;
 
+  /* 判断一个loop是否还是激活状态 */
   r = uv__loop_alive(loop);
+  /* 非激活为什么要更新时间 TODO */
   if (!r)
     uv__update_time(loop);
 
+  /* 当loop为激活状态且stop_flag为0 */
   while (r != 0 && loop->stop_flag == 0) {
+    /* 更新loop->time = uv__hrtime(UV_CLOCK_FAST) / 1000000; */
     uv__update_time(loop);
+    /* 执行定时器，凡是定时器的timeout小于loop->time的此时都会被执行 */
     uv__run_timers(loop);
+    /* 执行所有被悬挂的watcher，正常情况下，所有的 I/O watcher都会在轮询 I/O 
+    后立刻被调用。但是有些情况下，回调可能会被推迟至下一次循环迭代中再执行。
+    任何上一次循环中被推迟的回调，都将在这个时候得到执行。返回值为0表示没有
+    悬挂的watcher回调被执行，为1表示至少有一个悬挂的watcher回调被执行 */
     ran_pending = uv__run_pending(loop);
+    /* 执行空handle闲回调 TODO */
     uv__run_idle(loop);
+    /* 执行预备回调 TODO */
     uv__run_prepare(loop);
 
+    /* 超时时间默认为0，为不阻塞 */
     timeout = 0;
-    if ((mode == UV_RUN_ONCE && !ran_pending) || mode == UV_RUN_DEFAULT)
+    /* UV_RUN_ONCE表示在loop退出之前至少要执行一次回调操作 */
+    if ((mode == UV_RUN_ONCE && !ran_pending) || mode == UV_RUN_DEFAULT){
+      /* 计算后端（在linux上就是epoll_wait）超时时间 */
       timeout = uv_backend_timeout(loop);
-
+    }
+      
+    /* 阻塞id事件循环 */
     uv__io_poll(loop, timeout);
+    /* 执行检查句柄回调 */
     uv__run_check(loop);
+    /* 执行关闭回调 */
     uv__run_closing_handles(loop);
 
     if (mode == UV_RUN_ONCE) {
@@ -375,13 +400,17 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
       uv__run_timers(loop);
     }
 
+    /* 再次检查loop激活状态 */
     r = uv__loop_alive(loop);
+    /* 如果是UV_RUN_ONCE或UV_RUN_NOWAIT，则退出循环 */
     if (mode == UV_RUN_ONCE || mode == UV_RUN_NOWAIT)
       break;
   }
 
   /* The if statement lets gcc compile it to a conditional store. Avoids
    * dirtying a cache line.
+   * 
+   *  TODO:
    */
   if (loop->stop_flag != 0)
     loop->stop_flag = 0;
@@ -731,22 +760,28 @@ int uv_fileno(const uv_handle_t* handle, uv_os_fd_t* fd) {
   return 0;
 }
 
-
+/* 执行所有悬挂中的回调 */
 static int uv__run_pending(uv_loop_t* loop) {
   QUEUE* q;
   QUEUE pq;
   uv__io_t* w;
 
+  /* loop->pending_queue如果为空，表示没有悬挂的watcher要处理 */
   if (QUEUE_EMPTY(&loop->pending_queue))
     return 0;
 
+  /* 将队列loop->pending_queue移动到pq中 */
   QUEUE_MOVE(&loop->pending_queue, &pq);
-
+  
+  /* 遍历pq队列 */
   while (!QUEUE_EMPTY(&pq)) {
+    /* 接下来三步是标准的从队列中取一个几点的操作 */
     q = QUEUE_HEAD(&pq);
     QUEUE_REMOVE(q);
     QUEUE_INIT(q);
+    /* 根据q还原uv__io_t架构，典型的container_of用法 */
     w = QUEUE_DATA(q, uv__io_t, pending_queue);
+    /* 回调这个watcher的回调函数 */
     w->cb(loop, w, POLLOUT);
   }
 

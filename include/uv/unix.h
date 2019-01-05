@@ -93,13 +93,14 @@ typedef struct uv__io_s uv__io_t;
 struct uv__io_s {
   /* 回调 */
   uv__io_cb cb;
-  /* pending队列节点（前后向指针），用于构建loop pending队列 */
+  /* pending队列节点（前后向指针），用于构建loop pending队列，
+  没有得到执行的watcher会暂时被放入这个悬挂队列 */
   void* pending_queue[2];
   /* watcher队列节点（前后向指针），用于构建loop watcher队列 */
   void* watcher_queue[2];
-  /* Pending event mask i.e. mask at next tick. */
+  /* 待下次被注册的悬挂事件掩码 Pending event */
   unsigned int pevents; 
-  /* Current event mask. */
+  /* 当前已经注册的事件掩码. */
   unsigned int events;  
   /* 该watcher观察（绑定）的fd */
   int fd;
@@ -225,7 +226,7 @@ typedef struct {
   void* process_handles[2];   /*  */                                                         \
   void* prepare_handles[2];  /*  */                                                          \
   void* check_handles[2];    /*  */                                                          \
-  void* idle_handles[2];   /*  */                                                            \
+  void* idle_handles[2];   /* 空闲handles队列 */                                                            \
   void* async_handles[2];   /*  */                                                           \
   void (*async_unused)(void);  /* TODO(bnoordhuis) Remove in libuv v2. */     \
   uv__io_t async_io_watcher;    /*  */                                                       \
@@ -237,7 +238,7 @@ typedef struct {
   uint64_t timer_counter;  /*  */                                                            \
   uint64_t time;       /*  */                                                                \
   int signal_pipefd[2];   /*  */                                                             \
-  uv__io_t signal_io_watcher;  /*  */                                                        \
+  uv__io_t signal_io_watcher;  /* 信号watcher */                                                        \
   uv_signal_t child_watcher;  /*  */                                                         \
   int emfile_fd;             /*  */                                                          \
   UV_PLATFORM_LOOP_FIELDS    /*  */                                                          \
