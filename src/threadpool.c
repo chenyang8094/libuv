@@ -32,17 +32,17 @@
 static uv_once_t once = UV_ONCE_INIT;/* pthread_once_t */
 static uv_cond_t cond;/* 队列为空时线程池的线程会在该条件变量上睡眠 */
 static uv_mutex_t mutex;/* 线程池内部锁 */
-static unsigned int idle_threads;
+static unsigned int idle_threads;/* 当前空闲线程的数目 */
 static unsigned int slow_io_work_running;
 static unsigned int nthreads;
 static uv_thread_t* threads;
 static uv_thread_t default_threads[4];/* 默认四个线程的线程池 */
-static QUEUE exit_message;
+static QUEUE exit_message;/* 线程池退出消息 */
 static QUEUE wq; /* 线程池线程全部会检查这个queue，一旦发现有任务就执行，但是只能有一个线程抢占到 */
 static QUEUE run_slow_work_message;
 static QUEUE slow_io_pending_wq;/* 慢IO型的任务都会放到这个队列 */
 
-/*  */
+/* 慢任务的数目不成超过线程池线程数的一般 */
 static unsigned int slow_work_thread_threshold(void) {
   return (nthreads + 1) / 2;
 }
@@ -73,8 +73,10 @@ static void worker(void* arg) {
   for (;;) {
     /* `mutex` should always be locked at this point. */
 
-    /* Keep waiting while either no work is present or only slow I/O
-       and we're at the threshold for that. */
+    /* 
+      当任务队列wq为空或者（wq只剩run_slow_work_message一个节点且慢io任务的执行次数已经超过阈值），
+      那么此时就循环等待。
+    */
     while (QUEUE_EMPTY(&wq) ||
            (QUEUE_HEAD(&wq) == &run_slow_work_message &&
             QUEUE_NEXT(&run_slow_work_message) == &wq &&
@@ -89,12 +91,13 @@ static void worker(void* arg) {
 
     /* 取出队列的头部节点（第一个task） */
     q = QUEUE_HEAD(&wq);
-    /*  */
+    /* 如果这是一个退出消息 */
     if (q == &exit_message) {
-      /*  */
+      /* 给条件变量发信号 */
       uv_cond_signal(&cond);
-      /*  */
+      /* 解锁 */
       uv_mutex_unlock(&mutex);
+      /* 直接退出循环（也就是退出线程） */
       break;
     }
 
@@ -103,31 +106,40 @@ static void worker(void* arg) {
     QUEUE_INIT(q);  /* Signal uv_cancel() that the work req is executing. */
 
     is_slow_work = 0;
-    /*  */
+    /* 如果这个Task是run_slow_work_message */
     if (q == &run_slow_work_message) {
       /* If we're at the slow I/O threshold, re-schedule until after all
          other work in the queue is done. */
       if (slow_io_work_running >= slow_work_thread_threshold()) {
-        /*  */
+        /* 如果已处理慢io任务的数目超过阈值，就先不处理，将其加到wq中，开始处理下一个任务 */
         QUEUE_INSERT_TAIL(&wq, q);
         continue;
       }
 
-      /* If we encountered a request to run slow I/O work but there is none
-         to run, that means it's cancelled => Start over. */
+      /* 
+         否则，慢IO没有超过阈值，可以执行慢IO任务，但是如果slow_io_pending_wq为空，则说明
+         这个慢IO任务已经被取消了。则开始下一次循环
+         */
       if (QUEUE_EMPTY(&slow_io_pending_wq))
         continue;
 
+      /* 标记这是一个慢IO任务 */
       is_slow_work = 1;
+      /* 慢IO任务执行次数计数 */
       slow_io_work_running++;
 
+      /* 从slow_io_pending_wq中取出并删除这个任务 */
       q = QUEUE_HEAD(&slow_io_pending_wq);
       QUEUE_REMOVE(q);
       QUEUE_INIT(q);
 
-      /* If there is more slow I/O work, schedule it to be run as well. */
+      /* If there is more slow I/O work, schedule it to be run as well.
+         如果slow_io_pending_wq不为空，说明还有满IO任务待处理
+       */
       if (!QUEUE_EMPTY(&slow_io_pending_wq)) {
+        /* 再向wq中拆入run_slow_work_message */
         QUEUE_INSERT_TAIL(&wq, &run_slow_work_message);
+        /* 如果空闲线程大于0，就唤醒线程池 */
         if (idle_threads > 0)
           uv_cond_signal(&cond);
       }
@@ -176,14 +188,15 @@ static void post(QUEUE* q, enum uv__work_kind kind) {
   if (kind == UV__WORK_SLOW_IO) {
     /* 将该类型的任务加入到一个单独的队列slow_io_pending_wq */
     QUEUE_INSERT_TAIL(&slow_io_pending_wq, q);
-    /* 慢IO型任务 */
+    /* run_slow_work_message不为空表示已经被加入了wq队列 */
     if (!QUEUE_EMPTY(&run_slow_work_message)) {
       /* Running slow I/O tasks is already scheduled => Nothing to do here.
          The worker that runs said other task will schedule this one as well. */
       uv_mutex_unlock(&mutex);
       return;
     }
-    /*   */
+    /* 由于这正的慢IO任务已经被加入到slow_io_pending_wq，因此普通的wq中就加入run_slow_work_message，这
+    可以继续向下执行并唤醒线程池（也就是每执行一个慢IO任务，wq中就会加入一个run_slow_work_message） */
     q = &run_slow_work_message;
   }
 
@@ -199,21 +212,26 @@ static void post(QUEUE* q, enum uv__work_kind kind) {
 
 
 #ifndef _WIN32
+/* 在mian退出或者执行exit后的清理函数 */
 UV_DESTRUCTOR(static void cleanup(void)) {
   unsigned int i;
 
   if (nthreads == 0)
     return;
 
+  /* 向工作队列提交一个退出消息 */
   post(&exit_message, UV__WORK_CPU);
 
+  /* 等待线程池的线程全部退出 http://man7.org/linux/man-pages/man3/pthread_join.3.html */
   for (i = 0; i < nthreads; i++)
     if (uv_thread_join(threads + i))
       abort();
 
+  /* 如果不是默认线程池，还要释放内存 */
   if (threads != default_threads)
     uv__free(threads);
 
+  /* 销毁锁和条件变量 */
   uv_mutex_destroy(&mutex);
   uv_cond_destroy(&cond);
 
@@ -264,6 +282,7 @@ static void init_threads(void) {
 
   /* 初始化工作队列 */
   QUEUE_INIT(&wq);
+  /* 初始化慢IO型task工作队列 */
   QUEUE_INIT(&slow_io_pending_wq);
   QUEUE_INIT(&run_slow_work_message);
 
