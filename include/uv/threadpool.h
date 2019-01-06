@@ -27,10 +27,16 @@
 #ifndef UV_THREADPOOL_H_
 #define UV_THREADPOOL_H_
 
+/* uv__work就代表一个线程池的task
+ */
 struct uv__work {
+  /* 该task实际要执行的任务 */
   void (*work)(struct uv__work *w);
+  /* 任务执行完之后会回调该函数进行状态确认 */
   void (*done)(struct uv__work *w, int status);
+  /* 该task绑定的loop */
   struct uv_loop_s* loop;
+  /* 用于与其他task构建链表 */
   void* wq[2];
 };
 

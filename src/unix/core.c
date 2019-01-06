@@ -103,66 +103,84 @@ uint64_t uv_hrtime(void) {
   return uv__hrtime(UV_CLOCK_PRECISE);
 }
 
-
+/*  */
 void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
+  /*  */
   assert(!uv__is_closing(handle));
 
+  /*  */
   handle->flags |= UV_HANDLE_CLOSING;
+  /*  */
   handle->close_cb = close_cb;
 
+  /*  */
   switch (handle->type) {
+  /*  */
   case UV_NAMED_PIPE:
     uv__pipe_close((uv_pipe_t*)handle);
     break;
 
+  /*  */
   case UV_TTY:
     uv__stream_close((uv_stream_t*)handle);
     break;
 
+  /*  */
   case UV_TCP:
     uv__tcp_close((uv_tcp_t*)handle);
     break;
 
+  /*  */
   case UV_UDP:
     uv__udp_close((uv_udp_t*)handle);
     break;
 
+  /*  */
   case UV_PREPARE:
     uv__prepare_close((uv_prepare_t*)handle);
     break;
 
+  /*  */
   case UV_CHECK:
     uv__check_close((uv_check_t*)handle);
     break;
 
+  /*  */
   case UV_IDLE:
     uv__idle_close((uv_idle_t*)handle);
     break;
 
+  /*  */
   case UV_ASYNC:
     uv__async_close((uv_async_t*)handle);
     break;
 
+  /*  */
   case UV_TIMER:
     uv__timer_close((uv_timer_t*)handle);
     break;
 
+  /*  */
   case UV_PROCESS:
     uv__process_close((uv_process_t*)handle);
     break;
 
+  /*  */
   case UV_FS_EVENT:
     uv__fs_event_close((uv_fs_event_t*)handle);
     break;
 
+  /*  */
   case UV_POLL:
     uv__poll_close((uv_poll_t*)handle);
     break;
 
+  /*  */
   case UV_FS_POLL:
     uv__fs_poll_close((uv_fs_poll_t*)handle);
     break;
 
+  /*  */
   case UV_SIGNAL:
     uv__signal_close((uv_signal_t*) handle);
     /* Signal handles may not be closed immediately. The signal code will
@@ -176,6 +194,7 @@ void uv_close(uv_handle_t* handle, uv_close_cb close_cb) {
   uv__make_close_pending(handle);
 }
 
+/*  */
 int uv__socket_sockopt(uv_handle_t* handle, int optname, int* value) {
   int r;
   int fd;
@@ -184,18 +203,20 @@ int uv__socket_sockopt(uv_handle_t* handle, int optname, int* value) {
   if (handle == NULL || value == NULL)
     return UV_EINVAL;
 
+  /*  */
   if (handle->type == UV_TCP || handle->type == UV_NAMED_PIPE)
     fd = uv__stream_fd((uv_stream_t*) handle);
-  else if (handle->type == UV_UDP)
+  else if (handle->type == UV_UDP) /*  */
     fd = ((uv_udp_t *) handle)->io_watcher.fd;
   else
     return UV_ENOTSUP;
 
   len = sizeof(*value);
 
+  /*  */
   if (*value == 0)
     r = getsockopt(fd, SOL_SOCKET, optname, value, &len);
-  else
+  else/*  */
     r = setsockopt(fd, SOL_SOCKET, optname, (const void*) value, len);
 
   if (r < 0)
@@ -204,10 +225,15 @@ int uv__socket_sockopt(uv_handle_t* handle, int optname, int* value) {
   return 0;
 }
 
+/*  */
 void uv__make_close_pending(uv_handle_t* handle) {
+  /*  */
   assert(handle->flags & UV_HANDLE_CLOSING);
+  /*  */
   assert(!(handle->flags & UV_HANDLE_CLOSED));
+  /*  */
   handle->next_closing = handle->loop->closing_handles;
+  /*  */
   handle->loop->closing_handles = handle;
 }
 
@@ -230,7 +256,7 @@ int uv__getiovmax(void) {
 #endif
 }
 
-
+/*  */
 static void uv__finish_close(uv_handle_t* handle) {
   /* Note: while the handle is in the UV_HANDLE_CLOSING state now, it's still
    * possible for it to be active in the sense that uv__is_active() returns
@@ -259,11 +285,11 @@ static void uv__finish_close(uv_handle_t* handle) {
 
     case UV_NAMED_PIPE:
     case UV_TCP:
-    case UV_TTY:
+    case UV_TTY:/*  */
       uv__stream_destroy((uv_stream_t*)handle);
       break;
 
-    case UV_UDP:
+    case UV_UDP:/*  */
       uv__udp_finish_close((uv_udp_t*)handle);
       break;
 
@@ -271,23 +297,29 @@ static void uv__finish_close(uv_handle_t* handle) {
       assert(0);
       break;
   }
-
+   
+  /*  */
   uv__handle_unref(handle);
+  /*  */
   QUEUE_REMOVE(&handle->handle_queue);
 
+  /*  */
   if (handle->close_cb) {
     handle->close_cb(handle);
   }
 }
 
-
+/*  */
 static void uv__run_closing_handles(uv_loop_t* loop) {
   uv_handle_t* p;
   uv_handle_t* q;
 
+  /*  */
   p = loop->closing_handles;
+  /*  */
   loop->closing_handles = NULL;
 
+  /*  */
   while (p) {
     q = p->next_closing;
     uv__finish_close(p);
@@ -296,11 +328,13 @@ static void uv__run_closing_handles(uv_loop_t* loop) {
 }
 
 
+/*  */
 int uv_is_closing(const uv_handle_t* handle) {
   return uv__is_closing(handle);
 }
 
 
+/*  */
 uv_os_fd_t uv_backend_fd(const uv_loop_t* loop) {
   return loop->backend_fd;
 }
@@ -339,7 +373,7 @@ static int uv__loop_alive(const uv_loop_t* loop) {
          loop->closing_handles != NULL;
 }
 
-
+/*  */
 int uv_loop_alive(const uv_loop_t* loop) {
     return uv__loop_alive(loop);
 }
@@ -421,12 +455,12 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
   return r;
 }
 
-
+/*  */
 void uv_update_time(uv_loop_t* loop) {
   uv__update_time(loop);
 }
 
-
+/*  */
 int uv_is_active(const uv_handle_t* handle) {
   return uv__is_active(handle);
 }
@@ -791,7 +825,7 @@ static int uv__run_pending(uv_loop_t* loop) {
   return 1;
 }
 
-
+/* 返回大于等于val的最小的数，并且该数是2的次幂，如val是513，则返回1024 */
 static unsigned int next_power_of_two(unsigned int val) {
   val -= 1;
   val |= val >> 1;
@@ -803,18 +837,22 @@ static unsigned int next_power_of_two(unsigned int val) {
   return val;
 }
 
+/* 重新调整loop->watchers大小 */
 static void maybe_resize(uv_loop_t* loop, unsigned int len) {
+  /* 可以看成数组的形式 uv__io_t * watchers[] */
   uv__io_t** watchers;
   void* fake_watcher_list;
   void* fake_watcher_count;
   unsigned int nwatchers;
   unsigned int i;
 
+  /* 无需调整 */
   if (len <= loop->nwatchers)
     return;
 
   /* Preserve fake watcher list and count at the end of the watchers */
   if (loop->watchers != NULL) {
+    /* loop->watchers数组的最后两项分别保存着每次epoll_wait后events和nfds */
     fake_watcher_list = loop->watchers[loop->nwatchers];
     fake_watcher_count = loop->watchers[loop->nwatchers + 1];
   } else {
@@ -822,30 +860,43 @@ static void maybe_resize(uv_loop_t* loop, unsigned int len) {
     fake_watcher_count = NULL;
   }
 
+  /* 计算需要的长度 */
   nwatchers = next_power_of_two(len + 2) - 2;
+  /* 按照新的大小重新分配空间(还多分配了2个) */
   watchers = uv__realloc(loop->watchers,
                          (nwatchers + 2) * sizeof(loop->watchers[0]));
 
+  /* uv__realloc失败，直接abort */
   if (watchers == NULL)
     abort();
+  /* 情况每一项 */
   for (i = loop->nwatchers; i < nwatchers; i++)
     watchers[i] = NULL;
+  /* 这里利用多分配的那2个数组元素，保存events和nfds*/
   watchers[nwatchers] = fake_watcher_list;
   watchers[nwatchers + 1] = fake_watcher_count;
 
+  /* 指向新的watchers */
   loop->watchers = watchers;
+  /* 新的watchers数组大小 */
   loop->nwatchers = nwatchers;
 }
 
-
+/* 初始化一个io watcher */
 void uv__io_init(uv__io_t* w, uv__io_cb cb, int fd) {
   assert(cb != NULL);
   assert(fd >= -1);
+  /* 初始化悬挂队列 */
   QUEUE_INIT(&w->pending_queue);
+  /* 初始化watcher队列 */
   QUEUE_INIT(&w->watcher_queue);
+  /* 对应的回调函数 */
   w->cb = cb;
+  /* 绑定的fd */
   w->fd = fd;
+  /* 已注册监听事件 */
   w->events = 0;
+  /* 待注册监听事件 */
   w->pevents = 0;
 
 #if defined(UV_HAVE_KQUEUE)
@@ -854,14 +905,22 @@ void uv__io_init(uv__io_t* w, uv__io_cb cb, int fd) {
 #endif /* defined(UV_HAVE_KQUEUE) */
 }
 
-
+/* 向loop注册一个io watcher，其关注的事件为events */
 void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
+  /*
+     只允许watcher关注POLLIN、POLLOUT、UV__POLLRDHUP、UV__POLLPRI子集
+     更多的事件可参见：http://man7.org/linux/man-pages/man2/epoll_ctl.2.html
+  */
   assert(0 == (events & ~(POLLIN | POLLOUT | UV__POLLRDHUP | UV__POLLPRI)));
+  /* 要注册的事件不能为空 */
   assert(0 != events);
+  /* watcher绑定的fd必须合法 */
   assert(w->fd >= 0);
   assert(w->fd < INT_MAX);
 
+  /* 设置watcher悬挂的事件pending events */
   w->pevents |= events;
+  /* 重新调整loop->watchers大小 */
   maybe_resize(loop, w->fd + 1);
 
 #if !defined(__sun)
@@ -873,16 +932,20 @@ void uv__io_start(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
     return;
 #endif
 
+  /* 如果该watcher还没有被加入到watcher队列中，就将其加入loop->watcher_queue */
   if (QUEUE_EMPTY(&w->watcher_queue))
     QUEUE_INSERT_TAIL(&loop->watcher_queue, &w->watcher_queue);
 
+  /* 如果该fd对应的loop->watchers数组项还为空（意思是之前没有在该fd上注册过watcher，即一个fd上存在多个watcher） */
   if (loop->watchers[w->fd] == NULL) {
+    /* 将该watcher加入fd下标对应的loop->watchers数组项 */
     loop->watchers[w->fd] = w;
+    /* nfds表示该loop上注册的fd数目 */
     loop->nfds++;
   }
 }
 
-
+/* 停止一个io watcher对events的监听 */
 void uv__io_stop(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   assert(0 == (events & ~(POLLIN | POLLOUT | UV__POLLRDHUP | UV__POLLPRI)));
   assert(0 != events);
@@ -896,22 +959,32 @@ void uv__io_stop(uv_loop_t* loop, uv__io_t* w, unsigned int events) {
   if ((unsigned) w->fd >= loop->nwatchers)
     return;
 
+  /* 如果pevents和events完全相同，那么相交之后pevents为0 */
   w->pevents &= ~events;
 
+  /* pevents为0说明该watcher没有pending事件了 */
   if (w->pevents == 0) {
+    /* 以下两步将该watcher移除watcher_queue */
     QUEUE_REMOVE(&w->watcher_queue);
     QUEUE_INIT(&w->watcher_queue);
-
+  
+    /* 如果loop->watchers[w->fd]不为空 */
     if (loop->watchers[w->fd] != NULL) {
+      /* 则该数组项上的watcher必须是该watcher */
       assert(loop->watchers[w->fd] == w);
       assert(loop->nfds > 0);
+      /* 清空loop->watchers[w->fd]数组项 */
       loop->watchers[w->fd] = NULL;
+      /* loop上注册的fd减一 */
       loop->nfds--;
+      /* 清空watcher注册的事件 */
       w->events = 0;
     }
-  }
-  else if (QUEUE_EMPTY(&w->watcher_queue))
+  }/* 否则，该watcher上还有pending事件要处理 */
+  else if (QUEUE_EMPTY(&w->watcher_queue)){
+    /* 将该watcher加入loop->watcher_queue */
     QUEUE_INSERT_TAIL(&loop->watcher_queue, &w->watcher_queue);
+  }
 }
 
 
@@ -925,19 +998,23 @@ void uv__io_close(uv_loop_t* loop, uv__io_t* w) {
 
 /*  */
 void uv__io_feed(uv_loop_t* loop, uv__io_t* w) {
+  /* 如果该watcher还未加入pending_queue，就将其加入loop->pending_queue */
   if (QUEUE_EMPTY(&w->pending_queue))
     QUEUE_INSERT_TAIL(&loop->pending_queue, &w->pending_queue);
 }
 
-
+/*  */
 int uv__io_active(const uv__io_t* w, unsigned int events) {
+  /*  */
   assert(0 == (events & ~(POLLIN | POLLOUT | UV__POLLRDHUP | UV__POLLPRI)));
   assert(0 != events);
+  /*  */
   return 0 != (w->pevents & events);
 }
 
-
+/*  */
 int uv__fd_exists(uv_loop_t* loop, int fd) {
+  /*  */
   return (unsigned) fd < loop->nwatchers && loop->watchers[fd] != NULL;
 }
 

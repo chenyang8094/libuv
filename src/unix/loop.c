@@ -119,7 +119,7 @@ int uv_loop_init(uv_loop_t* loop) {
   if (err)
     goto fail_mutex_init;
 
-  /*   */
+  /* 初始化一个异步事件，loop->wq_async句柄用于线程池的work queue的异步通知，异步事件的回调为uv__work_done */
   err = uv_async_init(loop, &loop->wq_async, uv__work_done);
   if (err)
     goto fail_async_init;

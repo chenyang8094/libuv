@@ -85,7 +85,11 @@ static unsigned long read_cpufreq(unsigned int cpunum);
 /*  loop平台相关的初始化 */
 int uv__platform_loop_init(uv_loop_t* loop) {
   int fd;
-
+  
+  /* 
+    这是比较新的内核提供的接口：https://www.systutorials.com/docs/linux/man/2-epoll_create1/ 
+    同时注意这里传入的EPOLL_CLOEXEC标识，该标志的作用可以参见：https://www.systutorials.com/docs/linux/man/2-open/
+    */
   fd = epoll_create1(EPOLL_CLOEXEC);
 
   /* epoll_create1() can fail either because it's not implemented (old kernel)
@@ -98,6 +102,8 @@ int uv__platform_loop_init(uv_loop_t* loop) {
      */
     fd = epoll_create(256);
 
+    /* 由于epoll_create不支持设置CLOEXEC标志，因此这里需要单独用光fctl设置
+    设置FIOCLEX（set close on exec on fd ）标志 */
     if (fd != -1)
       uv__cloexec(fd, 1);
   }
@@ -115,7 +121,7 @@ int uv__platform_loop_init(uv_loop_t* loop) {
   return 0;
 }
 
-
+/*    */
 int uv__io_fork(uv_loop_t* loop) {
   int err;
   void* old_watchers;
@@ -133,9 +139,11 @@ int uv__io_fork(uv_loop_t* loop) {
   return uv__inotify_fork(loop, old_watchers);
 }
 
-
+/*  删除loop  */
 void uv__platform_loop_delete(uv_loop_t* loop) {
+  /*    */
   if (loop->inotify_fd == -1) return;
+  /*    */
   uv__io_stop(loop, &loop->inotify_read_watcher, POLLIN);
   uv__close(loop->inotify_fd);
   loop->inotify_fd = -1;
@@ -150,6 +158,7 @@ void uv__platform_invalidate_fd(uv_loop_t* loop, int fd) {
 
   assert(loop->watchers != NULL);
 
+  /* loop->watchers最后两项的特殊用途 */
   events = (struct epoll_event*) loop->watchers[loop->nwatchers];
   nfds = (uintptr_t) loop->watchers[loop->nwatchers + 1];
   if (events != NULL)
@@ -193,7 +202,7 @@ int uv__io_check_fd(uv_loop_t* loop, int fd) {
   return rc;
 }
 
-
+/* 处理io事件轮询 */
 void uv__io_poll(uv_loop_t* loop, int timeout) {
   /* A bug in kernels < 2.6.37 makes timeouts larger than ~30 minutes
    * effectively infinite on 32 bits architectures.  To avoid blocking
@@ -241,7 +250,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     assert(w->pevents != 0);
     /* 该watcher绑定的fd必须是有效的 */
     assert(w->fd >= 0);
-    /*   */
+    /* 这个在maybe_resize函数中保证 */
     assert(w->fd < (int) loop->nwatchers);
    
     /* 初始化epoll要监听的事件为watcher的Pending event */
@@ -267,7 +276,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       if (errno != EEXIST)
         abort();
 
-      /* 否则，就是EEXIST错误，表示对一个已经注册的fd执行EPOLL_CTL_ADD操作 */
+      /* 否则，就是EEXIST错误，表示对一个已经注册的fd执行EPOLL_CTL_ADD操作（一个fd允许被绑定到多个watcher） */
       assert(op == EPOLL_CTL_ADD);
 
       /* 重新用EPOLL_CTL_MOD来注册这个事件 */
@@ -366,7 +375,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       goto update_timeout;
     }
 
-    /* 能运行到这里，说明一定有就绪的fd事件  */
+    /* 能运行到这里，说明一定有就绪的fd事件 */
 
     /* 是否有信号 */
     have_signals = 0;
@@ -375,7 +384,8 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     
     /* watchers不为空指针（uv__io_t** watchers）  */
     assert(loop->watchers != NULL);
-    /*  */
+    /* loop->watchers数组向的最后两项分别存放了本次轮询后就绪的事件和就绪的fd个数,
+    注意直接把void *赋值给特定类型在c语言中是正确的，但是在c++中是错误的 */
     loop->watchers[loop->nwatchers] = (void*) events;
     loop->watchers[loop->nwatchers + 1] = (void*) (uintptr_t) nfds;
     /* 遍历所有就绪的fd */
@@ -393,7 +403,7 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
       /*  */
       assert((unsigned) fd < loop->nwatchers);
       
-      /* 根据fd取出watcher */
+      /* 根据fd取出对应的watcher */
       w = loop->watchers[fd];
       /* 如果该watcher为空指针 */
       if (w == NULL) {
@@ -464,11 +474,11 @@ void uv__io_poll(uv_loop_t* loop, int timeout) {
     if (have_signals != 0)
       loop->signal_io_watcher.cb(loop, &loop->signal_io_watcher, POLLIN);
 
-    /*  */ 
+    /* 清空，准备下一次轮询 */ 
     loop->watchers[loop->nwatchers] = NULL;
     loop->watchers[loop->nwatchers + 1] = NULL;
 
-    /* 有信号 */
+    /* 有信号为什么就需要退出？？？ */
     if (have_signals != 0)
       return;  /* Event loop should cycle now so don't poll again. */
 

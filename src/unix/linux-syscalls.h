@@ -80,6 +80,7 @@
 #define UV__IN_DELETE_SELF    0x400
 #define UV__IN_MOVE_SELF      0x800
 
+/* http://man7.org/linux/man-pages/man7/inotify.7.html */
 struct uv__inotify_event {
   int32_t wd;
   uint32_t mask;

@@ -40,6 +40,7 @@ struct watcher_list {
   int wd;
 };
 
+/* 红黑树根 */
 struct watcher_root {
   struct watcher_list* rbh_root;
 };
@@ -64,21 +65,26 @@ static void uv__inotify_read(uv_loop_t* loop,
 static void maybe_free_watcher_list(struct watcher_list* w,
                                     uv_loop_t* loop);
 
+/* 新建inotify fd，http://man7.org/linux/man-pages/man7/inotify.7.html */
 static int new_inotify_fd(void) {
   int err;
   int fd;
 
+  /* 较新的api，可以直接传递flags，详细参见：http://man7.org/linux/man-pages/man2/inotify_init.2.html */
   fd = uv__inotify_init1(UV__IN_NONBLOCK | UV__IN_CLOEXEC);
   if (fd != -1)
     return fd;
 
+  /* 错误是否是没有改系统调用 */
   if (errno != ENOSYS)
     return UV__ERR(errno);
 
+  /* 改用老的系统调用 */
   fd = uv__inotify_init();
   if (fd == -1)
     return UV__ERR(errno);
 
+  /* 老的系统调用，必须单独用fctl设置CLOEXEC标志 */
   err = uv__cloexec(fd, 1);
   if (err == 0)
     err = uv__nonblock(fd, 1);
@@ -91,19 +97,24 @@ static int new_inotify_fd(void) {
   return fd;
 }
 
-
+/* 初始化inotify */
 static int init_inotify(uv_loop_t* loop) {
   int err;
-
+ 
+  /* 已经初始化过了就直接返回 */
   if (loop->inotify_fd != -1)
     return 0;
 
+  /* 新建inotify描述符 */
   err = new_inotify_fd();
   if (err < 0)
     return err;
 
+  /* 设置到loop中 */
   loop->inotify_fd = err;
+  /* 在inotify_fd上注册一个loop->inotify_read_watche,回调函数为uv__inotify_read */
   uv__io_init(&loop->inotify_read_watcher, uv__inotify_read, loop->inotify_fd);
+  /* 注册事件 */
   uv__io_start(loop, &loop->inotify_read_watcher, POLLIN);
 
   return 0;
@@ -191,6 +202,7 @@ static void maybe_free_watcher_list(struct watcher_list* w, uv_loop_t* loop) {
   }
 }
 
+/* inotify回调 */
 static void uv__inotify_read(uv_loop_t* loop,
                              uv__io_t* dummy,
                              unsigned int events) {
@@ -207,6 +219,7 @@ static void uv__inotify_read(uv_loop_t* loop,
 
   while (1) {
     do
+      /* 读inotify_event事件，http://man7.org/linux/man-pages/man7/inotify.7.html */
       size = read(loop->inotify_fd, buf, sizeof(buf));
     while (size == -1 && errno == EINTR);
 
@@ -219,14 +232,18 @@ static void uv__inotify_read(uv_loop_t* loop,
 
     /* Now we have one or more inotify_event structs. */
     for (p = buf; p < buf + size; p += sizeof(*e) + e->len) {
+      /*  */
       e = (const struct uv__inotify_event*)p;
 
       events = 0;
+      /*  */
       if (e->mask & (UV__IN_ATTRIB|UV__IN_MODIFY))
         events |= UV_CHANGE;
+      /*  */
       if (e->mask & ~(UV__IN_ATTRIB|UV__IN_MODIFY))
         events |= UV_RENAME;
 
+       /*  */
       w = find_watcher(loop, e->wd);
       if (w == NULL)
         continue; /* Stale event, no watchers left. */
