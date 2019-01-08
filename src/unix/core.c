@@ -455,16 +455,15 @@ int uv_run(uv_loop_t* loop, uv_run_mode mode) {
   return r;
 }
 
-/*  */
+/* 更新loop时间 */
 void uv_update_time(uv_loop_t* loop) {
   uv__update_time(loop);
 }
 
-/*  */
+/* 判断一个handle是否是激活状态 */
 int uv_is_active(const uv_handle_t* handle) {
   return uv__is_active(handle);
 }
-
 
 /* Open a socket in non-blocking close-on-exec mode, atomically if possible. */
 int uv__socket(int domain, int type, int protocol) {
@@ -472,22 +471,34 @@ int uv__socket(int domain, int type, int protocol) {
   int err;
 
 #if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+  /* 
+   如果socket调用支持设置SOCK_NONBLOCK和SOCK_CLOEXEC标志
+   原型：int socket(int domain, int type, int protocol);
+   详见：http://man7.org/linux/man-pages/man2/socket.2.html
+   */
   sockfd = socket(domain, type | SOCK_NONBLOCK | SOCK_CLOEXEC, protocol);
+  /* 创建成功就直接返回 */
   if (sockfd != -1)
     return sockfd;
 
+  /* 如果错误不是因为Invalid flags */
   if (errno != EINVAL)
     return UV__ERR(errno);
 #endif
 
+  /*  
+   运行到这里，说明不支持直接设置flag,用老的方式创建
+   */
   sockfd = socket(domain, type, protocol);
   if (sockfd == -1)
     return UV__ERR(errno);
 
+  /* 单独设置非阻塞模式和CLOEXEC */
   err = uv__nonblock(sockfd, 1);
   if (err == 0)
     err = uv__cloexec(sockfd, 1);
 
+  /* 错误返回错误 */
   if (err) {
     uv__close(sockfd);
     return err;
@@ -496,6 +507,12 @@ int uv__socket(int domain, int type, int protocol) {
 #if defined(SO_NOSIGPIPE)
   {
     int on = 1;
+    /* 
+       SO_NOSIGPIPE是bsd平台的一个flag，用于设置是否忽略SIGPIPE信号（对已崩溃的对端连续两次两次将产生SIGPIPE）。
+       https://www.freebsd.org/cgi/man.cgi?query=setsockopt&sektion=2&manpath=freebsd-release-ports
+       这个标志不具有可移植性，更好的做法是在send的时候加上MSG_NOSIGNAL，详见：https://linux.die.net/man/2/send
+       对于setsockopt，详见：https://linux.die.net/man/2/setsockopt
+     */
     setsockopt(sockfd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
   }
 #endif

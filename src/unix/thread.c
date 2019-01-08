@@ -811,7 +811,7 @@ void uv_cond_wait(uv_cond_t* cond, uv_mutex_t* mutex) {
     abort();
 }
 
-
+/*  */
 int uv_cond_timedwait(uv_cond_t* cond, uv_mutex_t* mutex, uint64_t timeout) {
   int r;
   struct timespec ts;
@@ -856,23 +856,24 @@ int uv_cond_timedwait(uv_cond_t* cond, uv_mutex_t* mutex, uint64_t timeout) {
   return UV_EINVAL;  /* Satisfy the compiler. */
 }
 
-
+/* 在tsl中创建一个key */
 int uv_key_create(uv_key_t* key) {
   return UV__ERR(pthread_key_create(key, NULL));
 }
 
 
+/* 从tsl中删除一个kv */
 void uv_key_delete(uv_key_t* key) {
   if (pthread_key_delete(*key))
     abort();
 }
 
-
+/* 从tsl中取一个kv */
 void* uv_key_get(uv_key_t* key) {
   return pthread_getspecific(*key);
 }
 
-
+/* 向tsl中存入一个kv */
 void uv_key_set(uv_key_t* key, void* value) {
   if (pthread_setspecific(*key, value))
     abort();

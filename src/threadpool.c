@@ -47,7 +47,7 @@ static unsigned int slow_work_thread_threshold(void) {
   return (nthreads + 1) / 2;
 }
 
-/*  */
+
 static void uv__cancelled(struct uv__work* w) {
   abort();
 }
@@ -69,12 +69,12 @@ static void worker(void* arg) {
 
   /* 因为是多线程访问，因此需要加锁同步，mutex为线程池内部锁 */
   uv_mutex_lock(&mutex);
-  /*  */
+  /* 线程进入工作循环 */
   for (;;) {
     /* `mutex` should always be locked at this point. */
 
     /* 
-      当任务队列wq为空或者（wq只剩run_slow_work_message一个节点且慢io任务的执行次数已经超过阈值），
+      当任务队列wq为空或者（wq只剩run_slow_work_message一个节点且正在执行的慢io任务数目已经超过阈值），
       那么此时就循环等待。
     */
     while (QUEUE_EMPTY(&wq) ||
@@ -125,7 +125,7 @@ static void worker(void* arg) {
 
       /* 标记这是一个慢IO任务 */
       is_slow_work = 1;
-      /* 慢IO任务执行次数计数 */
+      /* 正在执行的慢IO任务数目 */
       slow_io_work_running++;
 
       /* 从slow_io_pending_wq中取出并删除这个任务 */
@@ -155,10 +155,10 @@ static void worker(void* arg) {
 
     /* 对loop->wq_mutex上互斥锁，因为接下来会并发修改loop->wq */
     uv_mutex_lock(&w->loop->wq_mutex);
-    /*   */
+    /* 执行完的work会被设置为NULL,在uv_cancel中会使用这个标识  */
     w->work = NULL;  /* Signal uv_cancel() that the work req is done
                         executing. */
-    /* 将该已经执行完的task加入loop->wq  */
+    /* 将该已经执行完的task加入loop->wq，将来会被取出来执行done  */
     QUEUE_INSERT_TAIL(&w->loop->wq, &w->wq);
     /* 向loop发送异步通知  */
     uv_async_send(&w->loop->wq_async);
@@ -169,7 +169,7 @@ static void worker(void* arg) {
      * iteration. */
     uv_mutex_lock(&mutex);
     if (is_slow_work) {
-      /* `slow_io_work_running` is protected by `mutex`. */
+      /* 慢IO任务执行完之后slow_io_work_running要减一 */
       slow_io_work_running--;
     }
   }
@@ -305,6 +305,7 @@ static void init_threads(void) {
 
 
 #ifndef _WIN32
+/* 重置once变量，使其可以再次初始化 */
 static void reset_once(void) {
   uv_once_t child_once = UV_ONCE_INIT;
   memcpy(&once, &child_once, sizeof(child_once));
@@ -321,6 +322,7 @@ static void init_once(void) {
   if (pthread_atfork(NULL, NULL, &reset_once))
     abort();
 #endif
+  /* 线程池初始化 */
   init_threads();
 }
 
@@ -344,22 +346,31 @@ void uv__work_submit(uv_loop_t* loop,
 static int uv__work_cancel(uv_loop_t* loop, uv_req_t* req, struct uv__work* w) {
   int cancelled;
 
+  /* 要操作工作队列，需要加锁 */
   uv_mutex_lock(&mutex);
   uv_mutex_lock(&w->loop->wq_mutex);
 
+  /* 该uv__work是否已经被取消 */
   cancelled = !QUEUE_EMPTY(&w->wq) && w->work != NULL;
+  /* 如果已经被取消了，则直接删除 */
   if (cancelled)
     QUEUE_REMOVE(&w->wq);
 
+  /* 解锁 */
   uv_mutex_unlock(&w->loop->wq_mutex);
   uv_mutex_unlock(&mutex);
 
+  /* 如果还没有被取消，则说明任务还处于忙的状态，此时不能取消 */
   if (!cancelled)
     return UV_EBUSY;
 
+  /* 将work函数设置为uv__cancelled（标志作用），理论上该work不会再被执行，否则会abort */
   w->work = uv__cancelled;
+
   uv_mutex_lock(&loop->wq_mutex);
+  /* 被取消的work也会被加入loop->wq,稍后会被取出来执行done回调 */
   QUEUE_INSERT_TAIL(&loop->wq, &w->wq);
+  /* 发送异步事件 */
   uv_async_send(&loop->wq_async);
   uv_mutex_unlock(&loop->wq_mutex);
 
@@ -380,7 +391,7 @@ void uv__work_done(uv_async_t* handle) {
   loop = container_of(handle, uv_loop_t, wq_async);
   /* loop->wq会被并发访问，先加锁 */
   uv_mutex_lock(&loop->wq_mutex);
-  /* 已经执行完的会被取消的task都会被加入loop->wq，将loop->wq全部移动到wq */
+  /* 已经执行完的或被取消的task都会被加入loop->wq，将loop->wq全部移动到wq */
   QUEUE_MOVE(&loop->wq, &wq);
   uv_mutex_unlock(&loop->wq_mutex);
 
@@ -399,27 +410,30 @@ void uv__work_done(uv_async_t* handle) {
   }
 }
 
-/*  */
+/* 用户提交的请求给线程池的work函数 */
 static void uv__queue_work(struct uv__work* w) {
+  /* 还原用户请求 */
   uv_work_t* req = container_of(w, uv_work_t, work_req);
-
+  /* 调用用户自己的work */
   req->work_cb(req);
 }
 
-/*  */
+/* 用户提交的请求给线程池的done函数 */
 static void uv__queue_done(struct uv__work* w, int err) {
   uv_work_t* req;
-
+  /* 还原用户请求 */
   req = container_of(w, uv_work_t, work_req);
+  /* 执行到done说明请求执行完毕，取消其注册 */
   uv__req_unregister(req->loop, req);
 
   if (req->after_work_cb == NULL)
     return;
 
+  /* 如果设置了after_work_cb回调就调用它 */
   req->after_work_cb(req, err);
 }
 
-/*  */
+/* 讲一个用户请求添加到线程池队列 */
 int uv_queue_work(uv_loop_t* loop,
                   uv_work_t* req,
                   uv_work_cb work_cb,
@@ -427,10 +441,13 @@ int uv_queue_work(uv_loop_t* loop,
   if (work_cb == NULL)
     return UV_EINVAL;
 
+  /* 初始化请求，请求类型初始化、loop->active_reqs.count++ */
   uv__req_init(loop, req, UV_WORK);
+  /* 绑定loop和回调函数 */
   req->loop = loop;
   req->work_cb = work_cb;
   req->after_work_cb = after_work_cb;
+  /* 提交给线程池,其中work函数为uv__queue_work，done函数为uv__queue_done */
   uv__work_submit(loop,
                   &req->work_req,
                   UV__WORK_CPU,
@@ -439,31 +456,40 @@ int uv_queue_work(uv_loop_t* loop,
   return 0;
 }
 
-/*  */
+/* 取消一个请求 */
 int uv_cancel(uv_req_t* req) {
   struct uv__work* wreq;
   uv_loop_t* loop;
 
+  /* 目前可以会在线程池中执行的请求类型有以下几种 */
   switch (req->type) {
-  case UV_FS:
+  case UV_FS:/* 文件类型请求 */
+    /* 该请求绑定的loop */
     loop =  ((uv_fs_t*) req)->loop;
+    /* 该请求绑定的uv__work */
     wreq = &((uv_fs_t*) req)->work_req;
     break;
-  case UV_GETADDRINFO:
+  case UV_GETADDRINFO:/* GETADDRINFO */
+    /* 该请求绑定的loop */
     loop =  ((uv_getaddrinfo_t*) req)->loop;
+    /* 该请求绑定的uv__work */
     wreq = &((uv_getaddrinfo_t*) req)->work_req;
     break;
-  case UV_GETNAMEINFO:
+  case UV_GETNAMEINFO:/* GETNAMEINFO */
+    /* 该请求绑定的loop */
     loop = ((uv_getnameinfo_t*) req)->loop;
+    /* 该请求绑定的uv__work */
     wreq = &((uv_getnameinfo_t*) req)->work_req;
     break;
-  case UV_WORK:
+  case UV_WORK:/* 用于定义的线程池任务 */
+    /* 该请求绑定的loop */
     loop =  ((uv_work_t*) req)->loop;
+    /* 该请求绑定的uv__work */
     wreq = &((uv_work_t*) req)->work_req;
     break;
   default:
     return UV_EINVAL;
   }
-
+  /* 取消这个uv__work */
   return uv__work_cancel(loop, req, wreq);
 }

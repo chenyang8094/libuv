@@ -27,12 +27,13 @@
 #include <assert.h>
 #include <errno.h>
 
-
+/* 创建一个tcp socket */
 static int new_socket(uv_tcp_t* handle, int domain, unsigned long flags) {
   struct sockaddr_storage saddr;
   socklen_t slen;
   int sockfd;
   int err;
+
 
   err = uv__socket(domain, SOCK_STREAM, 0);
   if (err < 0)

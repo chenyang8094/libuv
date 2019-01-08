@@ -142,7 +142,7 @@ typedef pthread_mutex_t uv_mutex_t;
 typedef pthread_rwlock_t uv_rwlock_t;
 typedef UV_PLATFORM_SEM_T uv_sem_t;
 typedef pthread_cond_t uv_cond_t;
-typedef pthread_key_t uv_key_t;
+typedef pthread_key_t uv_key_t;/* thread local storage ,类比于gcc中的__thread修饰符 */
 
 /* Note: guard clauses should match uv_barrier_init's in src/unix/thread.c. */
 #if defined(_AIX) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
